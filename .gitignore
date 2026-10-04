@@ -1,0 +1,26 @@
+# Thu muc build cua NetBeans (Ant)
+/build/
+/dist/
+/nbproject/private/
+
+# File bien dich va file nen
+*.class
+*.jar
+*.war
+*.zip
+*.rar
+
+# Cau hinh IDE ca nhan
+.idea/
+.vscode/
+*.iml
+
+# Du lieu sinh ra khi chay chuong trinh
+data/
+*.log
+*.csv
+
+# File rac he dieu hanh
+Thumbs.db
+Desktop.ini
+.DS_Store
