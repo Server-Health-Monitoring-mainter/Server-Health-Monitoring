@@ -27,8 +27,8 @@ sức khỏe (**CPU Load**, **Memory Usage**, **Số lượng kết nối**) qua
 
 | MSSV | Họ và Tên | Công việc đã thực hiện | Merge Requests |
 |---|---|---|---|
-| 2380601037 | Phạm Duy Khanh (Nhóm trưởng) | Lớp dùng chung Metrics, Protocol; tích hợp hệ thống | |
-| | | Thu thập chỉ số CPU, RAM, số kết nối | |
-| | | Agent Server TCP/UDP | |
-| | Nguyễn Quang Khánh | Kết nối Client TCP/UDP | |
-| | | Giao diện Client, cảnh báo, lưu trữ | |
+| 2380601037 | Phạm Duy Khanh (Nhóm trưởng) | Lớp dùng chung `Metrics`, `Protocol`; quản lý repo, Issue, review; tích hợp hệ thống | #2 |
+| 2380601519 | Lê Hữu Nhân | Thu thập chỉ số CPU, RAM, số kết nối (`MetricsCollector`) | |
+| 2380600722 | Ngô Ngọc Quốc Hoàng | Agent Server: mở cổng TCP + UDP 6000, gửi `metrics.toLine()` cho Client | |
+| 2380601031 | Nguyễn Quang Khánh | Kết nối Client tới nhiều Agent qua TCP/UDP | |
+| 2380600962 | Trần Quang Khải | Giao diện Monitoring Client: bảng, cảnh báo, lưu trữ | |
