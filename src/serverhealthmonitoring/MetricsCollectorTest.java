@@ -17,6 +17,17 @@ public class MetricsCollectorTest {
             throw new IllegalStateException("CPU khong hop le: " + metrics.cpu);
         }
         System.out.printf("CPU hop le: %.1f%%%n", metrics.cpu);
+        if (metrics.memTotalMB <= 0 || metrics.memUsedMB < 0
+                || metrics.memUsedMB > metrics.memTotalMB) {
+            throw new IllegalStateException("RAM khong hop le: used=" + metrics.memUsedMB
+                    + " MB, total=" + metrics.memTotalMB + " MB");
+        }
+        double ramPercent = metrics.memPercent();
+        if (!Double.isFinite(ramPercent) || ramPercent < 0.0 || ramPercent > 100.0) {
+            throw new IllegalStateException("Phan tram RAM khong hop le: " + ramPercent);
+        }
+        System.out.printf("RAM hop le: %d/%d MB (%.1f%%)%n",
+                metrics.memUsedMB, metrics.memTotalMB, ramPercent);
         System.out.println("KET QUA: DUNG - collect() tra ve Metrics voi dung ten Agent.");
     }
 }
