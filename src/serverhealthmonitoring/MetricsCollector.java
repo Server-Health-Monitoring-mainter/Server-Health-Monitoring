@@ -12,6 +12,7 @@ public class MetricsCollector {
         Metrics metrics = new Metrics();
         metrics.name = name;
         metrics.cpu = collectCpuPercent();
+        collectMemory(metrics);
         return metrics;
     }
 
@@ -29,6 +30,32 @@ public class MetricsCollector {
             return load * 100.0;
         } catch (UnsupportedOperationException e) {
             return 0.0;
+        }
+    }
+
+    private void collectMemory(Metrics metrics) {
+        if (!(operatingSystem instanceof OperatingSystemMXBean)) {
+            return;
+        }
+
+        try {
+            OperatingSystemMXBean bean = (OperatingSystemMXBean) operatingSystem;
+            long totalBytes = bean.getTotalMemorySize();
+            long freeBytes = bean.getFreeMemorySize();
+            if (totalBytes <= 0 || freeBytes < 0 || freeBytes > totalBytes) {
+                return;
+            }
+
+            // Don vi MB cua Metrics: 1 MB = 1024 * 1024 byte.
+            long bytesPerMB = 1024L * 1024L;
+            long totalMB = totalBytes / bytesPerMB;
+            if (totalMB <= 0) {
+                return;
+            }
+            metrics.memTotalMB = totalMB;
+            metrics.memUsedMB = (totalBytes - freeBytes) / bytesPerMB;
+        } catch (UnsupportedOperationException e) {
+            // Giu RAM mac dinh khi he dieu hanh khong ho tro API.
         }
     }
 }
