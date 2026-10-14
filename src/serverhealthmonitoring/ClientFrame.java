@@ -9,6 +9,7 @@ import java.awt.Font;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
+import java.io.IOException;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -36,7 +37,6 @@ import javax.swing.border.EmptyBorder;
 import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
 
-
 public class ClientFrame extends JFrame implements MetricsListener {
 
     private static final Color COLOR_BACKGROUND = new Color(243, 246, 250);
@@ -59,6 +59,7 @@ public class ClientFrame extends JFrame implements MetricsListener {
     private static final Color STATUS_NEUTRAL_BG = new Color(241, 245, 249);
     private static final Color STATUS_NEUTRAL_FG = new Color(71, 85, 105);
 
+
     private static final double CPU_WARNING_PERCENT = 80.0;
     private static final double MEMORY_WARNING_PERCENT = 80.0;
     private static final int CONNECTION_WARNING_COUNT = 100;
@@ -80,6 +81,7 @@ public class ClientFrame extends JFrame implements MetricsListener {
     private final Map<String, TcpConnection> tcpConnections = new HashMap<>();
     private final Map<String, String> lastWarningSignature = new HashMap<>();
     private final Map<String, Boolean> disconnectedState = new HashMap<>();
+    private final MetricsStorage metricsStorage = new MetricsStorage();
 
     private int nextAgentNumber = 1;
 
@@ -424,8 +426,10 @@ public class ClientFrame extends JFrame implements MetricsListener {
         }
     }
 
+  
     @Override
     public void onMetrics(String address, Metrics metrics) {
+        saveMetrics(address, metrics);
         SwingUtilities.invokeLater(() -> updateMetricsOnUi(address, metrics));
     }
 
@@ -433,6 +437,47 @@ public class ClientFrame extends JFrame implements MetricsListener {
     @Override
     public void onStatus(String address, String status) {
         SwingUtilities.invokeLater(() -> updateStatusOnUi(address, status));
+    }
+
+  
+    private void saveMetrics(String address, Metrics metrics) {
+        try {
+            metricsStorage.save(address, metrics);
+        } catch (IOException e) {
+            SwingUtilities.invokeLater(() -> appendLog(
+                    "LỖI LƯU TRỮ",
+                    "Không thể lưu Metrics của " + address + ": " + e.getMessage()));
+        }
+    }
+
+  
+    void addTestAgent(String address, String agentName) {
+        if (!SwingUtilities.isEventDispatchThread()) {
+            SwingUtilities.invokeLater(() -> addTestAgent(address, agentName));
+            return;
+        }
+
+        if (address == null || address.trim().isEmpty() || agentRows.containsKey(address)) {
+            return;
+        }
+
+        String displayName = (agentName == null || agentName.trim().isEmpty())
+                ? "TestAgent" : agentName.trim();
+        int modelRow = tableModel.getRowCount();
+
+        tableModel.addRow(new Object[]{
+            displayName,
+            address + " (TEST)",
+            "--",
+            "--",
+            "--",
+            "CHƯA CÓ DỮ LIỆU"
+        });
+
+        agentRows.put(address, modelRow);
+        disconnectedState.put(address, false);
+        updateAgentCount();
+        appendLog("TEST", displayName + " - Đã thêm Agent mô phỏng " + address);
     }
 
     private void updateMetricsOnUi(String address, Metrics metrics) {
