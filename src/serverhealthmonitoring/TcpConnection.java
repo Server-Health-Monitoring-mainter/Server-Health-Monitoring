@@ -1,7 +1,3 @@
-/*
- * Click nbfs://nbhost/SystemFileSystem/Templates/Licenses/license-default.txt to change this license
- * Click nbfs://nbhost/SystemFileSystem/Templates/Classes/Class.java to edit this template
- */
 package serverhealthmonitoring;
 
 import java.io.BufferedReader;
@@ -12,7 +8,7 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 
 
-public class TcpConnection extends Thread {
+public class TcpConnection extends Thread implements AgentConnection {
 
     private static final int CONNECT_TIMEOUT_MS = 3000;   
     private static final int READ_TIMEOUT_MS = 15000;     
@@ -32,6 +28,7 @@ public class TcpConnection extends Thread {
         setName("TCP-" + host + ":" + port);
     }
 
+    @Override
     public String getAddress() {
         return host + ":" + port;
     }
@@ -55,6 +52,7 @@ public class TcpConnection extends Thread {
                         m.timestamp = System.currentTimeMillis();
                         listener.onMetrics(getAddress(), m);
                     } catch (IllegalArgumentException e) {
+                        listener.onStatus(getAddress(), "DỮ LIỆU SAI: " + line);
                     }
                 }
                 if (running) listener.onStatus(getAddress(), "MẤT KẾT NỐI");
@@ -73,6 +71,7 @@ public class TcpConnection extends Thread {
         }
     }
 
+    @Override
     public void shutdown() {
         running = false;
         closeSocket();
@@ -86,4 +85,3 @@ public class TcpConnection extends Thread {
         }
     }
 }
-
