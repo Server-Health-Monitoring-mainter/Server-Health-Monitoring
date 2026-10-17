@@ -24,3 +24,7 @@ data/
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# Script ca nhan dung de push (khong dua len repo)
+*.bat
+*.cmd
