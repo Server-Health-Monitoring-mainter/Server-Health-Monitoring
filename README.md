@@ -18,6 +18,7 @@ sức khỏe (**CPU Load**, **Memory Usage**, **Số lượng kết nối**) qua
 
 | Thành phần | Lớp chính | Vai trò |
 |---|---|---|
+| Khởi động | `ServerHealthMonitoring` | Chọn chạy Client hoặc Agent theo tham số |
 | Dùng chung | `Metrics`, `Protocol` | Định dạng dữ liệu và quy ước giao tiếp |
 | Agent Server | `MetricsCollector`, `AgentServer` | Đo CPU/RAM thật, đếm kết nối, mở TCP + UDP |
 | Kết nối Client | `TcpConnection`, `UdpConnection`, `AgentManager` | Kết nối và quản lý nhiều Agent |
@@ -40,17 +41,20 @@ METRICS|name=web-01|cpu=23.5|memUsed=4096|memTotal=8192|conn=3
 
 ### Cách 1 – Trong NetBeans
 1. Mở project, bấm **Clean and Build** (Shift + F11).
-2. **Chạy Agent:** chuột phải `AgentServer.java` → **Run File** (Shift + F6). Agent chạy ở cổng 6000.
-3. **Chạy Client:** chuột phải `ClientFrame.java` → **Run File**.
+2. **Chạy Client:** bấm **Run Project** (F6) → mở cửa sổ Monitoring Client.
+3. **Chạy Agent:** chuột phải project → **Properties → Run → Arguments** nhập `agent --name web-01` → bấm F6. (Hoặc chuột phải `AgentServer.java` → **Run File**.)
 4. Trên Client nhập **Host** (vd. `localhost` hoặc IP máy chạy Agent), **Cổng** `6000`, chọn **TCP** hoặc **UDP** → **Thêm agent**.
 
-### Cách 2 – Dòng lệnh (sau khi Clean and Build)
+### Cách 2 – Chạy file jar (sau khi Clean and Build)
 ```
-# Chạy Agent (mỗi máy cần giám sát chạy 1 Agent, đặt tên khác nhau)
-java -cp dist/ServerHealthMonitoring.jar serverhealthmonitoring.AgentServer --port 6000 --name web-01
-
 # Chạy Client
-java -cp dist/ServerHealthMonitoring.jar serverhealthmonitoring.ClientFrame
+java -jar dist/ServerHealthMonitoring.jar
+
+# Chạy Agent (mỗi máy cần giám sát chạy 1 Agent; không có --name thì lấy tên máy)
+java -jar dist/ServerHealthMonitoring.jar agent --port 6000 --name web-01
+
+# Xem hướng dẫn
+java -jar dist/ServerHealthMonitoring.jar --help
 ```
 
 ### Chạy trên nhiều máy
@@ -87,7 +91,7 @@ Chuột phải từng file → **Run File**, kết quả mong đợi `KET QUA: D
 
 | MSSV | Họ và Tên | Công việc đã thực hiện | Merge Requests |
 |---|---|---|---|
-| 2380601037 | Phạm Duy Khanh (Nhóm trưởng) | Lớp dùng chung `Metrics`, `Protocol`; quản lý repo, Issue, Milestone; review và merge PR; tích hợp hệ thống; README | #2 |
+| 2380601037 | Phạm Duy Khanh (Nhóm trưởng) | Lớp dùng chung `Metrics`, `Protocol`; quản lý repo, Issue, Milestone; review và merge PR; kiểm tra dữ liệu trong `Metrics.parse()`; `main()` tích hợp chạy Agent/Client; README | #2, #23, #24, #25 |
 | 2380601519 | Lê Hữu Nhân | `MetricsCollector` đo CPU, RAM thật; `MetricsLogger` lưu dữ liệu ra file CSV | #9, #13, #19 |
 | 2380600722 | Ngô Ngọc Quốc Hoàng | `AgentServer` mở TCP + UDP cổng 6000, đếm kết nối, xử lý `GET`/`QUIT`, tích hợp `MetricsCollector` | #10, #22 |
 | 2380601031 | Nguyễn Quang Khánh | `TcpConnection`, `UdpConnection`, `AgentManager` kết nối Client tới nhiều Agent | #7, #12, #21 |
