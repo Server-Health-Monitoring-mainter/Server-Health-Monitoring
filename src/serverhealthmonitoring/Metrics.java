@@ -1,5 +1,7 @@
 package serverhealthmonitoring;
 
+import java.util.Locale;
+
 /**
  * Các chỉ số sức khỏe của 1 Agent Server tại 1 thời điểm.
  * Được truyền qua mạng dưới dạng 1 dòng văn bản:
@@ -33,21 +35,27 @@ public class Metrics {
 
     /**
      * Đọc lại 1 dòng nhận được thành đối tượng Metrics.
-     * @throws IllegalArgumentException nếu dòng sai định dạng
+     * Từ chối dòng sai định dạng hoặc số liệu vô lý để Client không hiển thị dữ liệu rác.
+     * @throws IllegalArgumentException nếu dòng sai định dạng hoặc giá trị không hợp lệ
      */
     public static Metrics parse(String line) {
-        if (line == null || !line.startsWith(PREFIX + "|")) {
+        if (line == null) {
+            throw new IllegalArgumentException("Sai định dạng: null");
+        }
+        line = line.trim();
+        if (!line.startsWith(PREFIX + "|")) {
             throw new IllegalArgumentException("Sai định dạng: " + line);
         }
         Metrics m = new Metrics();
+        m.name = null;
         try {
-            for (String part : line.trim().split("\\|")) {
+            for (String part : line.split("\\|")) {
                 int eq = part.indexOf('=');
                 if (eq < 0) {
                     continue; // bỏ qua phần "METRICS"
                 }
                 String key = part.substring(0, eq);
-                String val = part.substring(eq + 1);
+                String val = part.substring(eq + 1).trim();
                 switch (key) {
                     case "name":     m.name = val; break;
                     case "cpu":      m.cpu = Double.parseDouble(val); break;
@@ -60,12 +68,29 @@ public class Metrics {
         } catch (NumberFormatException e) {
             throw new IllegalArgumentException("Số không hợp lệ: " + line);
         }
+        validate(m, line);
         return m;
+    }
+
+    /** Kiểm tra số liệu có hợp lý không. */
+    private static void validate(Metrics m, String line) {
+        if (m.name == null || m.name.isEmpty()) {
+            throw new IllegalArgumentException("Thiếu tên Agent: " + line);
+        }
+        if (!Double.isFinite(m.cpu) || m.cpu < 0 || m.cpu > 100) {
+            throw new IllegalArgumentException("CPU phải trong khoảng 0-100: " + line);
+        }
+        if (m.memUsedMB < 0 || m.memTotalMB < 0 || m.connections < 0) {
+            throw new IllegalArgumentException("Số liệu không được âm: " + line);
+        }
+        if (m.memUsedMB > m.memTotalMB) {
+            throw new IllegalArgumentException("RAM đã dùng lớn hơn tổng RAM: " + line);
+        }
     }
 
     @Override
     public String toString() {
-        return String.format("%s | CPU %.1f%% | Mem %.1f%% (%d/%d MB) | Kết nối %d",
+        return String.format(Locale.US, "%s | CPU %.1f%% | Mem %.1f%% (%d/%d MB) | Kết nối %d",
                 name, cpu, memPercent(), memUsedMB, memTotalMB, connections);
     }
 }
