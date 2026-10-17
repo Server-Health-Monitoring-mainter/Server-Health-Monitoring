@@ -3,7 +3,9 @@ package serverhealthmonitoring;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 
-
+/**
+ * Mô phỏng dữ liệu để kiểm tra giao diện mà không cần Agent thật.
+ */
 public class ClientFrameTest {
 
     private static final String TEST_ADDRESS = "demo-agent:6000";
@@ -33,10 +35,19 @@ public class ClientFrameTest {
 
     private static Metrics[] createSamples() {
         return new Metrics[]{
+            // Bình thường
             createMetrics("DemoAgent", 35.0, 2048, 8192, 15),
+
+            // CPU > 80% -> cảnh báo
             createMetrics("DemoAgent", 86.5, 3500, 8192, 22),
-            createMetrics("DemoAgent", 48.0, 7200, 8192, 28),
+
+            // RAM > 90% -> cảnh báo (7600 / 8192 ≈ 92.8%)
+            createMetrics("DemoAgent", 48.0, 7600, 8192, 28),
+
+            // Số kết nối cao nhưng không phải ngưỡng cảnh báo của Tuần 2
             createMetrics("DemoAgent", 52.0, 3600, 8192, 125),
+
+            // Trở lại bình thường
             createMetrics("DemoAgent", 42.0, 3000, 8192, 18)
         };
     }

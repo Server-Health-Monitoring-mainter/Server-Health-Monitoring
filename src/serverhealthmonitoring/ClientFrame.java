@@ -9,6 +9,8 @@ import java.awt.Font;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
 import java.io.IOException;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
@@ -37,6 +39,17 @@ import javax.swing.border.EmptyBorder;
 import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
 
+/**
+ * Giao diện Monitoring Client.
+ *
+ * Issue #6 - Tuần 2:
+ * - Tích hợp AgentManager cho cả TCP và UDP.
+ * - Nhận dữ liệu qua MetricsListener.
+ * - Tách cột Giao thức khỏi cột Địa chỉ.
+ * - Hỗ trợ thêm/xóa Agent và dừng toàn bộ kết nối khi đóng cửa sổ.
+ * - Cảnh báo CPU > 80%, RAM > 90% và tô màu cả dòng.
+ * - Lưu Metrics bằng MetricsLogger.
+ */
 public class ClientFrame extends JFrame implements MetricsListener {
 
     private static final Color COLOR_BACKGROUND = new Color(243, 246, 250);
@@ -44,6 +57,8 @@ public class ClientFrame extends JFrame implements MetricsListener {
     private static final Color COLOR_HEADER = new Color(23, 37, 61);
     private static final Color COLOR_PRIMARY = new Color(47, 128, 237);
     private static final Color COLOR_PRIMARY_HOVER = new Color(33, 105, 205);
+    private static final Color COLOR_DANGER = new Color(220, 53, 69);
+    private static final Color COLOR_DANGER_HOVER = new Color(190, 43, 57);
     private static final Color COLOR_TEXT = new Color(34, 45, 58);
     private static final Color COLOR_TEXT_SECONDARY = new Color(108, 117, 125);
     private static final Color COLOR_BORDER = new Color(218, 224, 232);
@@ -56,13 +71,9 @@ public class ClientFrame extends JFrame implements MetricsListener {
     private static final Color STATUS_WARNING_FG = new Color(154, 52, 18);
     private static final Color STATUS_ERROR_BG = new Color(254, 226, 226);
     private static final Color STATUS_ERROR_FG = new Color(153, 27, 27);
-    private static final Color STATUS_NEUTRAL_BG = new Color(241, 245, 249);
-    private static final Color STATUS_NEUTRAL_FG = new Color(71, 85, 105);
-
 
     private static final double CPU_WARNING_PERCENT = 80.0;
-    private static final double MEMORY_WARNING_PERCENT = 80.0;
-    private static final int CONNECTION_WARNING_COUNT = 100;
+    private static final double MEMORY_WARNING_PERCENT = 90.0;
 
     private static final DateTimeFormatter LOG_TIME_FORMAT =
             DateTimeFormatter.ofPattern("HH:mm:ss");
@@ -71,17 +82,30 @@ public class ClientFrame extends JFrame implements MetricsListener {
     private JSpinner spnPort;
     private JComboBox<String> cboProtocol;
     private JButton btnAddAgent;
+    private JButton btnRemoveAgent;
 
     private DefaultTableModel tableModel;
     private JTable tblAgents;
     private JLabel lblAgentCount;
     private JTextArea txtLog;
 
+    private final AgentManager manager = new AgentManager(this);
+
+    /**
+     * Map address (host:port) -> model row.
+     * AgentManager cũng dùng address làm khóa nên address là duy nhất.
+     */
     private final Map<String, Integer> agentRows = new HashMap<>();
-    private final Map<String, TcpConnection> tcpConnections = new HashMap<>();
+
+    /**
+     * Lưu cảnh báo cuối cùng để tránh ghi log lặp lại mỗi 2 giây.
+     */
     private final Map<String, String> lastWarningSignature = new HashMap<>();
+
+    /**
+     * Theo dõi trạng thái mất kết nối để tránh spam log.
+     */
     private final Map<String, Boolean> disconnectedState = new HashMap<>();
-    private final MetricsStorage metricsStorage = new MetricsStorage();
 
     private int nextAgentNumber = 1;
 
@@ -117,8 +141,8 @@ public class ClientFrame extends JFrame implements MetricsListener {
         textPanel.add(lblTitle);
         textPanel.add(javax.swing.Box.createVerticalStrut(4));
         textPanel.add(lblSubtitle);
-        headerPanel.add(textPanel, BorderLayout.WEST);
 
+        headerPanel.add(textPanel, BorderLayout.WEST);
         return headerPanel;
     }
 
@@ -179,7 +203,7 @@ public class ClientFrame extends JFrame implements MetricsListener {
 
         txtHost = new JTextField("127.0.0.1");
         styleTextField(txtHost);
-        txtHost.setPreferredSize(new Dimension(250, 38));
+        txtHost.setPreferredSize(new Dimension(230, 38));
 
         gbc.gridx = 1;
         gbc.weightx = 1;
@@ -194,7 +218,7 @@ public class ClientFrame extends JFrame implements MetricsListener {
         spnPort = new JSpinner(new SpinnerNumberModel(
                 Protocol.DEFAULT_PORT, 1, 65535, 1));
         styleSpinner(spnPort);
-        spnPort.setPreferredSize(new Dimension(105, 38));
+        spnPort.setPreferredSize(new Dimension(100, 38));
 
         gbc.gridx = 3;
         formPanel.add(spnPort, gbc);
@@ -202,9 +226,11 @@ public class ClientFrame extends JFrame implements MetricsListener {
         gbc.gridx = 4;
         formPanel.add(createFieldLabel("Giao thức"), gbc);
 
-        cboProtocol = new JComboBox<>(new String[]{"TCP", "UDP"});
+        cboProtocol = new JComboBox<>(new String[]{
+            AgentManager.TCP, AgentManager.UDP
+        });
         styleComboBox(cboProtocol);
-        cboProtocol.setPreferredSize(new Dimension(105, 38));
+        cboProtocol.setPreferredSize(new Dimension(95, 38));
 
         gbc.gridx = 5;
         formPanel.add(cboProtocol, gbc);
@@ -213,10 +239,18 @@ public class ClientFrame extends JFrame implements MetricsListener {
         stylePrimaryButton(btnAddAgent);
 
         gbc.gridx = 6;
-        gbc.insets = new Insets(0, 4, 0, 0);
+        gbc.insets = new Insets(0, 4, 0, 8);
         formPanel.add(btnAddAgent, gbc);
 
+        btnRemoveAgent = new JButton("Xóa agent");
+        styleDangerButton(btnRemoveAgent);
+
+        gbc.gridx = 7;
+        gbc.insets = new Insets(0, 0, 0, 0);
+        formPanel.add(btnRemoveAgent, gbc);
+
         btnAddAgent.addActionListener(e -> addAgentFromForm());
+        btnRemoveAgent.addActionListener(e -> removeSelectedAgent());
         txtHost.addActionListener(e -> addAgentFromForm());
 
         card.add(titlePanel, BorderLayout.NORTH);
@@ -246,7 +280,13 @@ public class ClientFrame extends JFrame implements MetricsListener {
         tableHeaderPanel.add(lblAgentCount, BorderLayout.EAST);
 
         String[] columns = {
-            "Agent", "Địa chỉ", "CPU %", "Memory %", "Số kết nối", "Trạng thái"
+            "Agent",
+            "Địa chỉ",
+            "Giao thức",
+            "CPU %",
+            "Memory %",
+            "Số kết nối",
+            "Trạng thái"
         };
 
         tableModel = new DefaultTableModel(columns, 0) {
@@ -256,15 +296,40 @@ public class ClientFrame extends JFrame implements MetricsListener {
             }
         };
 
+        /*
+         * Tô màu CẢ DÒNG dựa trên trạng thái.
+         * row là view row nên phải convert sang model row vì JTable có sorter.
+         */
         tblAgents = new JTable(tableModel) {
             @Override
             public Component prepareRenderer(
                     javax.swing.table.TableCellRenderer renderer,
-                    int row, int column) {
+                    int row,
+                    int column) {
 
                 Component component = super.prepareRenderer(renderer, row, column);
 
-                if (column != 5 && !isRowSelected(row)) {
+                if (isRowSelected(row)) {
+                    component.setBackground(getSelectionBackground());
+                    component.setForeground(getSelectionForeground());
+                    return component;
+                }
+
+                int modelRow = convertRowIndexToModel(row);
+                String status = String.valueOf(
+                        tableModel.getValueAt(modelRow, 6)).toUpperCase();
+
+                if (isDisconnectedStatus(status)) {
+                    component.setBackground(STATUS_ERROR_BG);
+                    component.setForeground(STATUS_ERROR_FG);
+                } else if (status.contains("CẢNH BÁO")
+                        || status.contains("DỮ LIỆU SAI")) {
+                    component.setBackground(STATUS_WARNING_BG);
+                    component.setForeground(STATUS_WARNING_FG);
+                } else if (status.contains("ỔN ĐỊNH")) {
+                    component.setBackground(STATUS_OK_BG);
+                    component.setForeground(STATUS_OK_FG);
+                } else {
                     component.setBackground(row % 2 == 0
                             ? Color.WHITE : COLOR_TABLE_ALT);
                     component.setForeground(COLOR_TEXT);
@@ -301,10 +366,9 @@ public class ClientFrame extends JFrame implements MetricsListener {
         lblTitle.setForeground(COLOR_TEXT);
 
         JLabel lblThreshold = new JLabel(String.format(
-                "Ngưỡng: CPU %.0f%%  |  RAM %.0f%%  |  Kết nối %d",
+                "Ngưỡng cảnh báo: CPU > %.0f%%  |  RAM > %.0f%%",
                 CPU_WARNING_PERCENT,
-                MEMORY_WARNING_PERCENT,
-                CONNECTION_WARNING_COUNT));
+                MEMORY_WARNING_PERCENT));
         lblThreshold.setFont(new Font("Segoe UI", Font.PLAIN, 11));
         lblThreshold.setForeground(COLOR_TEXT_SECONDARY);
 
@@ -350,24 +414,24 @@ public class ClientFrame extends JFrame implements MetricsListener {
         DefaultTableCellRenderer centerRenderer = new DefaultTableCellRenderer();
         centerRenderer.setHorizontalAlignment(SwingConstants.CENTER);
 
-        for (int column = 2; column <= 4; column++) {
+        for (int column = 2; column <= 6; column++) {
             tblAgents.getColumnModel()
                     .getColumn(column)
                     .setCellRenderer(centerRenderer);
         }
 
-        tblAgents.getColumnModel()
-                .getColumn(5)
-                .setCellRenderer(new StatusCellRenderer());
-
-        tblAgents.getColumnModel().getColumn(0).setPreferredWidth(130);
-        tblAgents.getColumnModel().getColumn(1).setPreferredWidth(230);
-        tblAgents.getColumnModel().getColumn(2).setPreferredWidth(90);
-        tblAgents.getColumnModel().getColumn(3).setPreferredWidth(100);
-        tblAgents.getColumnModel().getColumn(4).setPreferredWidth(110);
-        tblAgents.getColumnModel().getColumn(5).setPreferredWidth(140);
+        tblAgents.getColumnModel().getColumn(0).setPreferredWidth(125);
+        tblAgents.getColumnModel().getColumn(1).setPreferredWidth(180);
+        tblAgents.getColumnModel().getColumn(2).setPreferredWidth(85);
+        tblAgents.getColumnModel().getColumn(3).setPreferredWidth(85);
+        tblAgents.getColumnModel().getColumn(4).setPreferredWidth(95);
+        tblAgents.getColumnModel().getColumn(5).setPreferredWidth(105);
+        tblAgents.getColumnModel().getColumn(6).setPreferredWidth(135);
     }
 
+    /**
+     * Thêm Agent qua AgentManager cho cả TCP và UDP.
+     */
     private void addAgentFromForm() {
         String host = txtHost.getText().trim();
         int port = (Integer) spnPort.getValue();
@@ -383,91 +447,154 @@ public class ClientFrame extends JFrame implements MetricsListener {
             return;
         }
 
-        String address = host + ":" + port;
+        try {
+            /*
+             * AgentManager trả về đúng address theo AgentConnection.getAddress():
+             * host:port.
+             */
+            String address = manager.addAgent(host, port, protocol);
 
-        if (agentRows.containsKey(address)) {
+            int modelRow = tableModel.getRowCount();
+            String agentName = "Agent " + nextAgentNumber;
+
+            tableModel.addRow(new Object[]{
+                agentName,
+                address,
+                protocol,
+                "--",
+                "--",
+                "--",
+                "ĐANG KẾT NỐI"
+            });
+
+            agentRows.put(address, modelRow);
+            disconnectedState.put(address, false);
+            nextAgentNumber++;
+            updateAgentCount();
+
+            appendLog(
+                    "INFO",
+                    agentName + " - Đã thêm "
+                    + address + " qua " + protocol);
+
+        } catch (IllegalArgumentException e) {
             JOptionPane.showMessageDialog(
                     this,
-                    "Agent " + address + " đã có trong danh sách.",
-                    "Agent đã tồn tại",
+                    e.getMessage(),
+                    "Không thể thêm Agent",
+                    JOptionPane.WARNING_MESSAGE);
+        }
+    }
+
+    /**
+     * Xóa Agent đang chọn trong JTable.
+     */
+    private void removeSelectedAgent() {
+        int viewRow = tblAgents.getSelectedRow();
+
+        if (viewRow < 0) {
+            JOptionPane.showMessageDialog(
+                    this,
+                    "Vui lòng chọn Agent cần xóa.",
+                    "Chưa chọn Agent",
                     JOptionPane.INFORMATION_MESSAGE);
             return;
         }
 
-        String agentName = "Agent " + nextAgentNumber;
-        String displayAddress = address + " (" + protocol + ")";
+        int modelRow = tblAgents.convertRowIndexToModel(viewRow);
+        String address = String.valueOf(tableModel.getValueAt(modelRow, 1));
+        String agentName = getAgentName(modelRow);
 
-        int modelRow = tableModel.getRowCount();
-        tableModel.addRow(new Object[]{
-            agentName,
-            displayAddress,
-            "--",
-            "--",
-            "--",
-            "CHƯA KẾT NỐI"
-        });
+        manager.removeAgent(address);
 
-        agentRows.put(address, modelRow);
-        disconnectedState.put(address, false);
-        nextAgentNumber++;
+        tableModel.removeRow(modelRow);
+        agentRows.remove(address);
+        lastWarningSignature.remove(address);
+        disconnectedState.remove(address);
+
+        rebuildAgentRows();
         updateAgentCount();
 
-        appendLog("INFO", agentName + " - Đã thêm " + displayAddress);
+        appendLog("INFO", agentName + " - Đã xóa Agent " + address);
+    }
 
-        if ("TCP".equals(protocol)) {
-            tableModel.setValueAt("ĐANG KẾT NỐI", modelRow, 5);
+    /**
+     * Sau khi xóa một dòng, index các dòng phía sau thay đổi.
+     */
+    private void rebuildAgentRows() {
+        agentRows.clear();
 
-            TcpConnection connection = new TcpConnection(host, port, this);
-            tcpConnections.put(address, connection);
-            connection.start();
-        } else {
-            appendLog("INFO",
-                    agentName + " - UDP đã được thêm vào bảng, chờ tích hợp kết nối UDP");
+        for (int row = 0; row < tableModel.getRowCount(); row++) {
+            Object address = tableModel.getValueAt(row, 1);
+            if (address != null) {
+                agentRows.put(address.toString(), row);
+            }
         }
     }
 
-  
+    /**
+     * Callback chạy từ thread kết nối.
+     * Lưu CSV rồi chuyển phần cập nhật Swing về EDT.
+     */
     @Override
     public void onMetrics(String address, Metrics metrics) {
         saveMetrics(address, metrics);
-        SwingUtilities.invokeLater(() -> updateMetricsOnUi(address, metrics));
+
+        SwingUtilities.invokeLater(
+                () -> updateMetricsOnUi(address, metrics));
     }
 
-
+    /**
+     * Callback trạng thái chạy từ thread kết nối.
+     * Mọi cập nhật JTable/log được chuyển về EDT.
+     */
     @Override
     public void onStatus(String address, String status) {
-        SwingUtilities.invokeLater(() -> updateStatusOnUi(address, status));
+        SwingUtilities.invokeLater(
+                () -> updateStatusOnUi(address, status));
     }
 
-  
+    /**
+     * Tuần 2 dùng MetricsLogger của Issue #15 / PR #19.
+     */
     private void saveMetrics(String address, Metrics metrics) {
         try {
-            metricsStorage.save(address, metrics);
+            MetricsLogger.log(address, metrics);
         } catch (IOException e) {
             SwingUtilities.invokeLater(() -> appendLog(
                     "LỖI LƯU TRỮ",
-                    "Không thể lưu Metrics của " + address + ": " + e.getMessage()));
+                    "Không thể lưu Metrics của "
+                    + address + ": " + e.getMessage()));
         }
     }
 
-  
+    /**
+     * Chỉ phục vụ ClientFrameTest, không tạo kết nối thật.
+     */
     void addTestAgent(String address, String agentName) {
         if (!SwingUtilities.isEventDispatchThread()) {
-            SwingUtilities.invokeLater(() -> addTestAgent(address, agentName));
+            SwingUtilities.invokeLater(
+                    () -> addTestAgent(address, agentName));
             return;
         }
 
-        if (address == null || address.trim().isEmpty() || agentRows.containsKey(address)) {
+        if (address == null
+                || address.trim().isEmpty()
+                || agentRows.containsKey(address)) {
             return;
         }
 
-        String displayName = (agentName == null || agentName.trim().isEmpty())
-                ? "TestAgent" : agentName.trim();
+        String displayName =
+                (agentName == null || agentName.trim().isEmpty())
+                ? "TestAgent"
+                : agentName.trim();
+
         int modelRow = tableModel.getRowCount();
 
         tableModel.addRow(new Object[]{
             displayName,
-            address + " (TEST)",
+            address,
+            "TEST",
             "--",
             "--",
             "--",
@@ -477,11 +604,15 @@ public class ClientFrame extends JFrame implements MetricsListener {
         agentRows.put(address, modelRow);
         disconnectedState.put(address, false);
         updateAgentCount();
-        appendLog("TEST", displayName + " - Đã thêm Agent mô phỏng " + address);
+
+        appendLog(
+                "TEST",
+                displayName + " - Đã thêm Agent mô phỏng " + address);
     }
 
     private void updateMetricsOnUi(String address, Metrics metrics) {
         Integer row = agentRows.get(address);
+
         if (row == null) {
             return;
         }
@@ -490,97 +621,165 @@ public class ClientFrame extends JFrame implements MetricsListener {
             tableModel.setValueAt(metrics.name, row, 0);
         }
 
-        tableModel.setValueAt(String.format("%.1f%%", metrics.cpu), row, 2);
-        tableModel.setValueAt(String.format("%.1f%%", metrics.memPercent()), row, 3);
-        tableModel.setValueAt(metrics.connections, row, 4);
+        tableModel.setValueAt(
+                String.format("%.1f%%", metrics.cpu), row, 3);
+
+        tableModel.setValueAt(
+                String.format("%.1f%%", metrics.memPercent()), row, 4);
+
+        tableModel.setValueAt(metrics.connections, row, 5);
 
         List<String> warnings = collectWarnings(metrics);
 
         if (warnings.isEmpty()) {
-            tableModel.setValueAt("ỔN ĐỊNH", row, 5);
+            tableModel.setValueAt("ỔN ĐỊNH", row, 6);
 
             String oldWarning = lastWarningSignature.remove(address);
             if (oldWarning != null && !oldWarning.isEmpty()) {
-                appendLog("PHỤC HỒI",
-                        getAgentName(row) + " - Các chỉ số đã trở lại dưới ngưỡng");
+                appendLog(
+                        "PHỤC HỒI",
+                        getAgentName(row)
+                        + " - CPU/RAM đã trở lại dưới ngưỡng");
             }
         } else {
-            tableModel.setValueAt("CẢNH BÁO", row, 5);
+            tableModel.setValueAt("CẢNH BÁO", row, 6);
 
             String signature = String.join(" | ", warnings);
             String previous = lastWarningSignature.get(address);
 
             if (!signature.equals(previous)) {
-                appendLog("CẢNH BÁO",
+                appendLog(
+                        "CẢNH BÁO",
                         getAgentName(row) + " - " + signature);
+
                 lastWarningSignature.put(address, signature);
             }
         }
 
-        disconnectedState.put(address, false);
+        /*
+         * Không reset disconnectedState ở đây.
+         * Trạng thái kết nối thật được quản lý ở onStatus().
+         */
+        tblAgents.repaint();
     }
 
     private void updateStatusOnUi(String address, String rawStatus) {
         Integer row = agentRows.get(address);
+
         if (row == null || rawStatus == null) {
             return;
         }
 
-        if (rawStatus.startsWith("ĐÃ KẾT NỐI")) {
-            boolean wasDisconnected = disconnectedState.getOrDefault(address, false);
+        String status = rawStatus.trim();
+
+        /*
+         * TCP đã kết nối hoặc UDP đang nhận dữ liệu.
+         * Nếu Metrics đang vượt ngưỡng thì vẫn giữ CẢNH BÁO.
+         */
+        if (status.startsWith("ĐÃ KẾT NỐI")
+                || status.startsWith("ĐANG NHẬN (UDP)")) {
+
+            boolean wasDisconnected =
+                    disconnectedState.getOrDefault(address, false);
+
             disconnectedState.put(address, false);
 
-            tableModel.setValueAt("ỔN ĐỊNH", row, 5);
+            if (!lastWarningSignature.containsKey(address)) {
+                tableModel.setValueAt("ỔN ĐỊNH", row, 6);
+            }
 
             if (wasDisconnected) {
-                appendLog("KẾT NỐI",
-                        getAgentName(row) + " - Kết nối lại thành công tới " + address);
-            } else {
-                appendLog("KẾT NỐI",
-                        getAgentName(row) + " - Đã kết nối tới " + address);
+                appendLog(
+                        "KẾT NỐI",
+                        getAgentName(row)
+                        + " - Đã phục hồi kết nối tới " + address);
+            } else if (status.startsWith("ĐÃ KẾT NỐI")) {
+                appendLog(
+                        "KẾT NỐI",
+                        getAgentName(row)
+                        + " - Đã kết nối tới " + address);
             }
+
+            tblAgents.repaint();
             return;
         }
 
-        if (rawStatus.startsWith("MẤT KẾT NỐI")) {
-            tableModel.setValueAt("MẤT KẾT NỐI", row, 5);
+        /*
+         * TCP mất kết nối hoặc UDP không phản hồi/lỗi mạng -> đỏ.
+         */
+        if (isDisconnectedStatus(status)) {
+            tableModel.setValueAt("MẤT KẾT NỐI", row, 6);
 
-            boolean alreadyDisconnected = disconnectedState.getOrDefault(address, false);
+            boolean alreadyDisconnected =
+                    disconnectedState.getOrDefault(address, false);
+
             if (!alreadyDisconnected) {
-                appendLog("MẤT KẾT NỐI",
-                        getAgentName(row) + " - " + rawStatus);
+                appendLog(
+                        "MẤT KẾT NỐI",
+                        getAgentName(row) + " - " + status);
             }
 
             disconnectedState.put(address, true);
             lastWarningSignature.remove(address);
+
+            tblAgents.repaint();
             return;
         }
 
-        if (rawStatus.startsWith("ĐANG KẾT NỐI")) {
-            tableModel.setValueAt("ĐANG KẾT NỐI", row, 5);
+        /*
+         * Dữ liệu sai: vẫn còn kết nối nhưng dữ liệu không hợp lệ.
+         */
+        if (status.startsWith("DỮ LIỆU SAI")) {
+            tableModel.setValueAt("CẢNH BÁO", row, 6);
+            appendLog(
+                    "CẢNH BÁO",
+                    getAgentName(row) + " - " + status);
+            tblAgents.repaint();
+            return;
+        }
+
+        if (status.startsWith("ĐANG KẾT NỐI")) {
+            tableModel.setValueAt("ĐANG KẾT NỐI", row, 6);
+            tblAgents.repaint();
         }
     }
 
+    private boolean isDisconnectedStatus(String status) {
+        if (status == null) {
+            return false;
+        }
+
+        String upper = status.toUpperCase();
+
+        return upper.contains("MẤT KẾT NỐI")
+                || upper.contains("KHÔNG PHẢN HỒI")
+                || upper.contains("LỖI UDP");
+    }
+
+    /**
+     * Đúng yêu cầu Tuần 2:
+     * - CPU > 80%
+     * - RAM > 90%
+     *
+     * Không dùng số kết nối làm ngưỡng cảnh báo ở Tuần 2.
+     */
     private List<String> collectWarnings(Metrics metrics) {
         List<String> warnings = new ArrayList<>();
 
-        if (metrics.cpu >= CPU_WARNING_PERCENT) {
+        if (metrics.cpu > CPU_WARNING_PERCENT) {
             warnings.add(String.format(
                     "CPU %.1f%% vượt ngưỡng %.0f%%",
-                    metrics.cpu, CPU_WARNING_PERCENT));
+                    metrics.cpu,
+                    CPU_WARNING_PERCENT));
         }
 
         double memoryPercent = metrics.memPercent();
-        if (memoryPercent >= MEMORY_WARNING_PERCENT) {
+
+        if (memoryPercent > MEMORY_WARNING_PERCENT) {
             warnings.add(String.format(
                     "RAM %.1f%% vượt ngưỡng %.0f%%",
-                    memoryPercent, MEMORY_WARNING_PERCENT));
-        }
-
-        if (metrics.connections >= CONNECTION_WARNING_COUNT) {
-            warnings.add(String.format(
-                    "Số kết nối %d vượt ngưỡng %d",
-                    metrics.connections, CONNECTION_WARNING_COUNT));
+                    memoryPercent,
+                    MEMORY_WARNING_PERCENT));
         }
 
         return warnings;
@@ -597,12 +796,18 @@ public class ClientFrame extends JFrame implements MetricsListener {
         }
 
         String time = LocalTime.now().format(LOG_TIME_FORMAT);
-        txtLog.append(String.format("[%s] [%s] %s%n", time, level, message));
-        txtLog.setCaretPosition(txtLog.getDocument().getLength());
+
+        txtLog.append(
+                String.format("[%s] [%s] %s%n",
+                        time, level, message));
+
+        txtLog.setCaretPosition(
+                txtLog.getDocument().getLength());
     }
 
     private void updateAgentCount() {
-        lblAgentCount.setText(tableModel.getRowCount() + " agent");
+        lblAgentCount.setText(
+                tableModel.getRowCount() + " agent");
     }
 
     private JLabel createFieldLabel(String text) {
@@ -623,103 +828,125 @@ public class ClientFrame extends JFrame implements MetricsListener {
 
     private void styleSpinner(JSpinner spinner) {
         spinner.setFont(new Font("Segoe UI", Font.PLAIN, 13));
-        spinner.setBorder(BorderFactory.createLineBorder(COLOR_BORDER));
+        spinner.setBorder(
+                BorderFactory.createLineBorder(COLOR_BORDER));
 
-        JSpinner.DefaultEditor editor = (JSpinner.DefaultEditor) spinner.getEditor();
-        editor.getTextField().setFont(new Font("Segoe UI", Font.PLAIN, 13));
-        editor.getTextField().setBorder(new EmptyBorder(5, 7, 5, 7));
+        JSpinner.DefaultEditor editor =
+                (JSpinner.DefaultEditor) spinner.getEditor();
+
+        editor.getTextField().setFont(
+                new Font("Segoe UI", Font.PLAIN, 13));
+
+        editor.getTextField().setBorder(
+                new EmptyBorder(5, 7, 5, 7));
     }
 
-    private void styleComboBox(JComboBox<String> comboBox) {
-        comboBox.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+    private void styleComboBox(
+            JComboBox<String> comboBox) {
+
+        comboBox.setFont(
+                new Font("Segoe UI", Font.PLAIN, 13));
+
         comboBox.setBackground(Color.WHITE);
         comboBox.setForeground(COLOR_TEXT);
     }
 
     private void stylePrimaryButton(JButton button) {
-        button.setFont(new Font("Segoe UI", Font.BOLD, 13));
+        button.setFont(
+                new Font("Segoe UI", Font.BOLD, 13));
+
         button.setForeground(Color.WHITE);
         button.setBackground(COLOR_PRIMARY);
         button.setFocusPainted(false);
-        button.setBorder(new EmptyBorder(10, 20, 10, 20));
-        button.setCursor(new Cursor(Cursor.HAND_CURSOR));
 
-        button.addMouseListener(new java.awt.event.MouseAdapter() {
+        button.setBorder(
+                new EmptyBorder(10, 20, 10, 20));
+
+        button.setCursor(
+                new Cursor(Cursor.HAND_CURSOR));
+
+        button.addMouseListener(
+                new java.awt.event.MouseAdapter() {
+
             @Override
-            public void mouseEntered(java.awt.event.MouseEvent evt) {
-                button.setBackground(COLOR_PRIMARY_HOVER);
+            public void mouseEntered(
+                    java.awt.event.MouseEvent evt) {
+                button.setBackground(
+                        COLOR_PRIMARY_HOVER);
             }
 
             @Override
-            public void mouseExited(java.awt.event.MouseEvent evt) {
-                button.setBackground(COLOR_PRIMARY);
+            public void mouseExited(
+                    java.awt.event.MouseEvent evt) {
+                button.setBackground(
+                        COLOR_PRIMARY);
+            }
+        });
+    }
+
+    private void styleDangerButton(JButton button) {
+        button.setFont(
+                new Font("Segoe UI", Font.BOLD, 13));
+
+        button.setForeground(Color.WHITE);
+        button.setBackground(COLOR_DANGER);
+        button.setFocusPainted(false);
+
+        button.setBorder(
+                new EmptyBorder(10, 20, 10, 20));
+
+        button.setCursor(
+                new Cursor(Cursor.HAND_CURSOR));
+
+        button.addMouseListener(
+                new java.awt.event.MouseAdapter() {
+
+            @Override
+            public void mouseEntered(
+                    java.awt.event.MouseEvent evt) {
+                button.setBackground(
+                        COLOR_DANGER_HOVER);
+            }
+
+            @Override
+            public void mouseExited(
+                    java.awt.event.MouseEvent evt) {
+                button.setBackground(
+                        COLOR_DANGER);
             }
         });
     }
 
     private void initFrame() {
         setTitle("Server Health Monitoring");
-        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        setSize(1100, 760);
-        setMinimumSize(new Dimension(950, 650));
+        setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
+        setSize(1180, 760);
+        setMinimumSize(new Dimension(1000, 650));
         setLocationRelativeTo(null);
-    }
 
-    private class StatusCellRenderer extends DefaultTableCellRenderer {
-        StatusCellRenderer() {
-            setHorizontalAlignment(SwingConstants.CENTER);
-            setFont(new Font("Segoe UI", Font.BOLD, 12));
-            setOpaque(true);
-        }
-
-        @Override
-        public Component getTableCellRendererComponent(
-                JTable table,
-                Object value,
-                boolean isSelected,
-                boolean hasFocus,
-                int row,
-                int column) {
-
-            super.getTableCellRendererComponent(
-                    table, value, isSelected, hasFocus, row, column);
-
-            if (isSelected) {
-                setBackground(table.getSelectionBackground());
-                setForeground(table.getSelectionForeground());
-                return this;
+        addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosing(WindowEvent e) {
+                manager.stopAll();
+                dispose();
             }
-
-            String status = value == null ? "" : value.toString().toUpperCase();
-
-            if (status.contains("ỔN ĐỊNH")) {
-                setBackground(STATUS_OK_BG);
-                setForeground(STATUS_OK_FG);
-            } else if (status.contains("CẢNH BÁO")) {
-                setBackground(STATUS_WARNING_BG);
-                setForeground(STATUS_WARNING_FG);
-            } else if (status.contains("MẤT KẾT NỐI")) {
-                setBackground(STATUS_ERROR_BG);
-                setForeground(STATUS_ERROR_FG);
-            } else {
-                setBackground(STATUS_NEUTRAL_BG);
-                setForeground(STATUS_NEUTRAL_FG);
-            }
-
-            return this;
-        }
+        });
     }
 
     public static void main(String[] args) {
         try {
-            for (UIManager.LookAndFeelInfo info : UIManager.getInstalledLookAndFeels()) {
+            for (UIManager.LookAndFeelInfo info
+                    : UIManager.getInstalledLookAndFeels()) {
+
                 if ("Nimbus".equals(info.getName())) {
-                    UIManager.setLookAndFeel(info.getClassName());
+                    UIManager.setLookAndFeel(
+                            info.getClassName());
                     break;
                 }
             }
         } catch (Exception e) {
-            System.err.println("Không thể bật Nimbus Look & Feel.");
+            System.err.println(
+                    "Không thể bật Nimbus Look & Feel.");
         }
 
         SwingUtilities.invokeLater(() -> {
